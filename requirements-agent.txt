@@ -1,0 +1,2 @@
+# 可选：DIGEST_AGENT_SCORE=1 时需要；Python ≥3.10；依赖多、下载大
+pydantic-ai>=1.0.0; python_version >= "3.10"

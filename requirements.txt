@@ -1,0 +1,7 @@
+httpx>=0.27.0
+feedparser>=6.0.11
+openai>=1.54.0
+python-dotenv>=1.0.1
+# lxml 6+ 移除了 lxml.html.clean；justext/trafilatura 需单独安装
+lxml-html-clean>=0.4.0
+trafilatura>=1.8.0

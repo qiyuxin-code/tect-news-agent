@@ -1,0 +1,3 @@
+# 一条命令安装「核心 + PydanticAI 打分」（下载多、易占用网络带宽）
+-r requirements.txt
+-r requirements-agent.txt
