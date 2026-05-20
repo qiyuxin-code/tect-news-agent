@@ -66,6 +66,10 @@ def main() -> None:
         pre_collected=collected,
     )
     print(path.resolve())
+    if settings.digest_output_html:
+        html_path = path.with_suffix(".html")
+        if html_path.is_file():
+            print(html_path.resolve())
 
 
 if __name__ == "__main__":

@@ -62,8 +62,16 @@ def collect_articles(
         XiaohongshuSeedSource(seed_path),
         HackerNewsSource(timeout_sec=rss_timeout_sec),
         LobstersSource(timeout_sec=rss_timeout_sec),
-        InfoQSource(timeout_sec=rss_timeout_sec),
-        JiqizhixinSource(),
+        InfoQSource(
+            tuple(settings.infoq_feed_urls),
+            timeout_sec=rss_timeout_sec,
+        ),
+        JiqizhixinSource(
+            settings.jiqizhixin_api_base_url,
+            settings.digest_tz,
+            timeout_sec=rss_timeout_sec,
+            max_pages=settings.jiqizhixin_max_pages,
+        ),
     ]
     collected: list[Article] = []
     for src in sources:
@@ -103,7 +111,9 @@ def run_pipeline(
     enrich_articles_agent_scores(collected, settings, log=print)
     collected = filter_articles_by_cs_depth(settings, collected, log=print)
 
-    bundle = generate_digest_bundle(settings, collected, wl)
+    bundle = generate_digest_bundle(
+        settings, collected, wl, generated_at=now.isoformat()
+    )
     digest = bundle.markdown
     header = (
         f"<!-- generated_at={now.isoformat()} window=[{since.isoformat()}, {until.isoformat()}) "
@@ -113,5 +123,8 @@ def run_pipeline(
         f"source_allowlist_filtered={bundle.filtered_item_count} -->\n\n"
     )
     outfile = out_dir / f"digest-{wl}.md"
-    outfile.write_text(header + digest + "\n", encoding="utf-8")
+    outfile.write_text(header + digest, encoding="utf-8")
+    if bundle.html:
+        html_path = out_dir / f"digest-{wl}.html"
+        html_path.write_text(bundle.html, encoding="utf-8")
     return outfile

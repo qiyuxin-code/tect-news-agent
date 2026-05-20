@@ -14,12 +14,15 @@ from tect_news.scoring_display import format_score_inline
 from tect_news.config import Settings
 from tect_news.models import Article
 from tect_news.urlnorm import normalize_url
+from tect_news.digest_html import render_digest_html
 from tect_news.verification import VerificationResult, verify_urls_subset
 
 UTC = timezone.utc
 
 JSON_INSTRUCTIONS = """输出唯一一个 JSON 对象（不要 markdown 围栏），结构如下：
 {
+  "headline": "本周一句话标题（≤32 字，概括主线，不用感叹号堆砌）",
+  "keywords": ["关键词1", "关键词2", "..."],
   "summary_paragraphs": [
     "第一段主编综述正文（2-4 段中的第 1 段）……",
     "第二段……",
@@ -29,10 +32,12 @@ JSON_INSTRUCTIONS = """输出唯一一个 JSON 对象（不要 markdown 围栏�
   "sections": [
     {
       "title": "主题小节标题（可自拟，体现归类逻辑，如「模型与范式」「工程与开源」「云与基础设施」）",
+      "tags": ["小节标签1", "小节标签2"],
       "items": [
         {
           "claim": "收敛后的一句话结论：应是你理解后的判断，不要用原标题加长或标题党复述",
           "context": "可选：一句补充（机制、影响范围、对读者的意义）；不需要则 \"\"",
+          "tags": ["条目标签1", "条目标签2"],
           "source_url": "必须从用户给出的 URL 列表中原样复制的一条"
         }
       ]
@@ -42,10 +47,13 @@ JSON_INSTRUCTIONS = """输出唯一一个 JSON 对象（不要 markdown 围栏�
     {
       "claim": "...",
       "context": "",
+      "tags": [],
       "source_url": "同上，须来自列表"
     }
   ]
 }
+keywords：6–12 个**中文短语**（每条 2–8 字），覆盖本周技术主线（如「大模型」「开源」「安全」「云原生」），禁止空泛词（「科技」「动态」）。
+sections[*].tags：0–3 个小节级标签；items[*].tags：每条 1–3 个更细标签，须与 claim 内容一致。
 对 summary_paragraphs 的正文要求：先写「本周最值得关注的 2-3 条技术脉络/矛盾/共识」，再点出跨领域的共同点；像编辑手记（归纳、串联），禁止出现 http 或裸 URL；事实与判断须与候选条目及下文 claim 对齐，禁止凭空主体或编造数字。
 
 编辑约束（与简单聚合的区别）：
@@ -89,6 +97,7 @@ def _full_system_instructions(settings: Settings, articles: list[Article]) -> st
 @dataclass
 class DigestBundle:
     markdown: str
+    html: str | None
     verification: VerificationResult
     filtered_item_count: int
 
@@ -246,8 +255,24 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
     ) from last_err
 
 
+def _normalize_tags(raw: Any, *, max_n: int = 12, max_len: int = 24) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for x in raw:
+        t = str(x).strip()
+        if not t or t in out:
+            continue
+        out.append(t[:max_len])
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _normalize_draft(data: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {
+        "headline": str(data.get("headline") or "").strip()[:80],
+        "keywords": _normalize_tags(data.get("keywords"), max_n=12),
         "summary_paragraphs": [],
         "sections": [],
         "trivia": [],
@@ -278,10 +303,17 @@ def _normalize_draft(data: dict[str, Any]) -> dict[str, Any]:
                         {
                             "claim": str(it.get("claim") or "").strip(),
                             "context": str(it.get("context") or "").strip(),
+                            "tags": _normalize_tags(it.get("tags"), max_n=3),
                             "source_url": su,
                         }
                     )
-            norm_secs.append({"title": title, "items": items_out})
+            norm_secs.append(
+                {
+                    "title": title,
+                    "tags": _normalize_tags(sec.get("tags"), max_n=3),
+                    "items": items_out,
+                }
+            )
         out["sections"] = norm_secs
     tr = data.get("trivia")
     if isinstance(tr, list):
@@ -296,6 +328,7 @@ def _normalize_draft(data: dict[str, Any]) -> dict[str, Any]:
                 {
                     "claim": str(it.get("claim") or "").strip(),
                     "context": str(it.get("context") or "").strip(),
+                    "tags": _normalize_tags(it.get("tags"), max_n=3),
                     "source_url": su,
                 }
             )
@@ -331,39 +364,59 @@ def _resolve_title(url: str, url_to_title: dict[str, str]) -> str:
     return url_to_title.get(key, "来源")
 
 
+def _format_item_tags(tags: list[str]) -> str:
+    if not tags:
+        return ""
+    return " `" + "` `".join(tags) + "`"
+
+
 def _render_markdown(draft: dict[str, Any], url_to_title: dict[str, str]) -> str:
     parts: list[str] = []
+    headline = str(draft.get("headline") or "").strip()
+    if headline:
+        parts.append(f"# {headline}\n\n")
+
+    keywords = draft.get("keywords") or []
+    if keywords:
+        parts.append("**本周关键词**：" + " · ".join(keywords) + "\n\n")
+
     paras = draft.get("summary_paragraphs") or []
     if paras:
-        parts.append("## 本周综述\n")
+        parts.append("## 本周综述\n\n")
         for p in paras:
-            parts.append(f"{p}\n")
+            parts.append(f"{p}\n\n")
 
     for sec in draft.get("sections") or []:
         title = sec.get("title") or "主题"
-        parts.append(f"\n## {title}\n")
+        sec_tags = sec.get("tags") or []
+        tag_line = ""
+        if sec_tags:
+            tag_line = "  \n*" + " · ".join(sec_tags) + "*\n"
+        parts.append(f"## {title}{tag_line}\n")
         for it in sec.get("items") or []:
             claim = it.get("claim") or ""
             ctx = (it.get("context") or "").strip()
             su = it.get("source_url") or ""
             lt = _resolve_title(su, url_to_title)
+            tags_s = _format_item_tags(it.get("tags") or [])
+            body = f"**{claim}**{tags_s}"
             if ctx:
-                parts.append(f"- {claim} {ctx} [{lt}]({su})\n")
-            else:
-                parts.append(f"- {claim} [{lt}]({su})\n")
+                body += f"  \n{ctx}"
+            parts.append(f"- {body}  \n  [{lt}]({su})\n")
 
     trivia = draft.get("trivia") or []
     if trivia:
-        parts.append("\n## 边角短讯\n")
+        parts.append("\n## 边角短讯\n\n")
         for it in trivia:
             claim = it.get("claim") or ""
             ctx = (it.get("context") or "").strip()
             su = it.get("source_url") or ""
             lt = _resolve_title(su, url_to_title)
+            tags_s = _format_item_tags(it.get("tags") or [])
+            body = f"**{claim}**{tags_s}"
             if ctx:
-                parts.append(f"- {claim} {ctx} [{lt}]({su})\n")
-            else:
-                parts.append(f"- {claim} [{lt}]({su})\n")
+                body += f"  \n{ctx}"
+            parts.append(f"- {body}  \n  [{lt}]({su})\n")
 
     return "".join(parts).strip() + "\n"
 
@@ -640,15 +693,25 @@ def _llm_json_draft(settings: Settings, articles: list[Article], week_label: str
     raise last_parse_err
 
 
-def generate_digest_bundle(settings: Settings, articles: list[Article], week_label: str) -> DigestBundle:
+def generate_digest_bundle(
+    settings: Settings,
+    articles: list[Article],
+    week_label: str,
+    *,
+    generated_at: str = "",
+) -> DigestBundle:
     allowed = {normalize_url(a.url) for a in articles}
     url_to_title = {normalize_url(a.url): a.title for a in articles}
+
+    def resolve_title(url: str) -> str:
+        return _resolve_title(url, url_to_title)
 
     draft = _llm_json_draft(settings, articles, week_label)
     draft, filtered = _filter_by_allowlist(draft, allowed)
     md = _render_markdown(draft, url_to_title)
     verification = verify_urls_subset(md, allowed)
 
+    warn_note = ""
     if not verification.ok and settings.digest_strict_urls:
         raise RuntimeError(
             "快报校验失败：存在未收录语料的链接（疑为模型编造或综述含 URL）。"
@@ -656,12 +719,32 @@ def generate_digest_bundle(settings: Settings, articles: list[Article], week_lab
             "可将 DIGEST_STRICT_URLS=0 改为仅告警。"
         )
     if not verification.ok:
+        warn_note = "下列 URL 不在本周采集白名单内，请人工复核： " + "；".join(
+            verification.urls_unknown
+        )
         md += (
             "\n---\n\n> **校验提醒**：下列 URL 不在本周采集白名单内，请人工复核：\n> - "
             + "\n> - ".join(verification.urls_unknown)
             + "\n"
         )
-    return DigestBundle(markdown=md, verification=verification, filtered_item_count=filtered)
+
+    html_out: str | None = None
+    if settings.digest_output_html:
+        html_out = render_digest_html(
+            draft,
+            week_label=week_label,
+            resolve_title=resolve_title,
+            generated_at=generated_at,
+            articles_count=len(articles),
+            verification_note=warn_note,
+        )
+
+    return DigestBundle(
+        markdown=md,
+        html=html_out,
+        verification=verification,
+        filtered_item_count=filtered,
+    )
 
 
 def generate_digest_markdown(settings: Settings, articles: list[Article], week_label: str) -> str:

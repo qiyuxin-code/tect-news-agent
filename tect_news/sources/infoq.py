@@ -1,6 +1,8 @@
-"""InfoQ 中文站：RSS（infoq.cn/feed）。
+"""InfoQ：中文 / 英文 RSS。
 
-英文站主页 feed 常为 WAF 拦截 HEAD/UA，暂不默认混入；可按需在 RSS_FEED_URLS 里自建订阅。"""
+- 中文：https://www.infoq.cn/feed（默认）
+- 英文：https://www.infoq.com/rss/rss.action（``INFOQ_INCLUDE_EN=1`` 或 ``INFOQ_FEED_URLS``）
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +12,7 @@ from tect_news.sources.base import Source
 from tect_news.sources.rss import RssSource
 
 _CN_FEED = "https://www.infoq.cn/feed"
+_EN_FEED = "https://www.infoq.com/rss/rss.action"
 
 
 class InfoQSource(Source):
@@ -26,3 +29,10 @@ class InfoQSource(Source):
 
     def fetch(self, since_utc: datetime, until_utc: datetime) -> list[Article]:
         return self._rss.fetch(since_utc, until_utc)
+
+
+def default_infoq_feed_urls(*, include_en: bool) -> list[str]:
+    urls = [_CN_FEED]
+    if include_en:
+        urls.append(_EN_FEED)
+    return urls

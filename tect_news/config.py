@@ -28,8 +28,12 @@ class Settings:
     xhs_api_base_url: str | None
     xhs_api_key: str | None
     rss_feed_urls: list[str]
+    infoq_feed_urls: list[str]
+    jiqizhixin_api_base_url: str
+    jiqizhixin_max_pages: int
     digest_tz: ZoneInfo
     digest_strict_urls: bool
+    digest_output_html: bool
     digest_llm_temperature: float
     digest_llm_max_completion_tokens: int
     digest_fetch_body: bool
@@ -150,6 +154,15 @@ def load_settings() -> Settings:
 
     extra = _split_urls(os.getenv("RSS_FEED_URLS"))
     feeds = extra if extra else default_feeds
+
+    infoq_custom = _split_urls(os.getenv("INFOQ_FEED_URLS"))
+    if infoq_custom:
+        infoq_feeds = infoq_custom
+    else:
+        infoq_feeds = ["https://www.infoq.cn/feed"]
+        if _env_bool("INFOQ_INCLUDE_EN", False):
+            infoq_feeds.append("https://www.infoq.com/rss/rss.action")
+
     tz_name = os.getenv("DIGEST_TZ", "Asia/Shanghai")
     digest_tz = ZoneInfo(tz_name)
 
@@ -219,8 +232,14 @@ def load_settings() -> Settings:
         xhs_api_base_url=os.getenv("XHS_API_BASE_URL") or None,
         xhs_api_key=os.getenv("XHS_API_KEY") or None,
         rss_feed_urls=feeds,
+        infoq_feed_urls=infoq_feeds,
+        jiqizhixin_api_base_url=os.getenv(
+            "JIQIZHIXIN_API_BASE_URL", "https://www.jiqizhixin.com"
+        ).rstrip("/"),
+        jiqizhixin_max_pages=max(1, _env_int("JIQIZHIXIN_MAX_PAGES", 8)),
         digest_tz=digest_tz,
         digest_strict_urls=_env_bool("DIGEST_STRICT_URLS", True),
+        digest_output_html=_env_bool("DIGEST_OUTPUT_HTML", True),
         digest_llm_temperature=_env_float("DIGEST_LLM_TEMPERATURE", 0.35),
         digest_llm_max_completion_tokens=min(
             128_000,

@@ -11,7 +11,7 @@
   - 可选 **正文抓取**（`enrich.py`），提高归纳依据；
   - 可选 **PydanticAI 多维条目打分**，把「技术性 / 可信度感」草稿注入主编提示；
   - 可选 **CS 深度 JSON 打分筛选**；
-  - **结构化生成**：主编阶段 JSON schema → Markdown，**`source_url` 必须锚定本周语料**；
+  - **结构化生成**：主编阶段 JSON schema（含 `headline` / `keywords` / 条目标签）→ Markdown + 可选 **HTML 卡片**（`digest_html.py`），**`source_url` 必须锚定本周语料**；
   - **程序校验**：`DIGEST_STRICT_URLS` 时正文链接 ⊆ 采集白名单（`verification.py` + `urlnorm`）。
 
 ---
@@ -103,6 +103,7 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 | `tect_news/agent_scoring.py` | PydanticAI 批量条目打分 |
 | `tect_news/scoring_display.py` | `format_score_inline`（主编展示用；**无** pydantic-ai 依赖） |
 | `tect_news/digest.py` | 主编提示词、`_llm_json_draft`、`generate_digest_bundle`、可选 CS 筛选、周报 Markdown |
+| `tect_news/digest_html.py` | 周报 HTML 卡片渲染（`DIGEST_OUTPUT_HTML`） |
 | `tect_news/verification.py` | 快报正文 URL ⊆ 允许集 |
 | `tect_news/urlnorm.py` | URL 规范化 |
 | `tect_news/cli.py` | argparse |
@@ -110,7 +111,16 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 | `data/xiaohongshu_seed.json` | 小红书种子 |
 | `output/` | 产出目录 |
 
-数据源现状（占位会返回空列表）：**Hacker News / Lobsters / InfoQ CN** 已接 RSS；**机器之心** 占位。
+数据源现状：
+
+| 源 | 状态 |
+|----|------|
+| RSS（量子位、GitHub Blog 等） | 在线 |
+| GitHub 仓库搜索 | 在线 API |
+| Hacker News / Lobsters / InfoQ 中文 | 在线 RSS；`collect_articles` 单源异常仅 stderr 跳过 |
+| 机器之心 `jiqizhixin` | 文章库 JSON API（`JIQIZHIXIN_*`） |
+| InfoQ 英文 | 可选 `INFOQ_INCLUDE_EN=1` |
+| 小红书种子 | **仅本地 JSON**，无 API；`XHS_*` 未接线 |
 
 ---
 

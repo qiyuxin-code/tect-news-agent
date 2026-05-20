@@ -47,7 +47,12 @@ pip install --default-timeout=600 -r requirements-agent.txt
 | `python -m tect_news --output-dir /自定义目录` | 指定输出目录 |
 | `python -m tect_news --xiaohongshu-seed path/to.json` | 指定小红书种子 JSON（默认 `data/xiaohongshu_seed.json`） |
 
-完整生成后，最后一行打印生成文件的**绝对路径**。
+完整生成后，默认输出：
+
+- `output/digest-<年>-W<周>.md`（含**本周关键词**、条目标签，可读性增强）
+- `output/digest-<年>-W<周>.html`（卡片布局，浏览器直接打开；`DIGEST_OUTPUT_HTML=0` 可关）
+
+终端会打印上述文件的绝对路径。
 
 ---
 
@@ -78,10 +83,14 @@ pip install --default-timeout=600 -r requirements-agent.txt
 | GitHub 仓库搜索 | `GITHUB_TOKEN` 可选 |
 | 小红书种子 | `data/xiaohongshu_seed.json` |
 | Hacker News / Lobsters | 官方 RSS |
-| InfoQ 中文 | `https://www.infoq.cn/feed` |
-| 机器之心 | 当前占位（无稳定公开 RSS，返回空列表） |
+| InfoQ 中文 | 默认 `https://www.infoq.cn/feed` |
+| InfoQ 英文 | 可选：`INFOQ_INCLUDE_EN=1` 或 `INFOQ_FEED_URLS` |
+| 机器之心 | 文章库 API `api/article_library/articles.json` |
+| 小红书 | **未在线采集**：仅读本地 `data/xiaohongshu_seed.json`（默认可为空数组） |
 
-合并后 **按 URL 去重**。
+合并后 **按 URL 去重**。单源网络失败会跳过并打 stderr，不中断其它源。
+
+> Hacker News / Lobsters 等为境外 RSS，需代理或稳定网络；GitHub API 若经代理 TLS 异常可在 `.env` 配置 `NO_PROXY=api.github.com,github.com`。
 
 ---
 
@@ -113,4 +122,5 @@ pip install --default-timeout=600 -r requirements-agent.txt
 
 ## 更多架构说明
 
-见仓库根目录 **`CLAUDE.md`**（面向人类与 IDE 助手）。
+- **`CLAUDE.md`**：面向人类与 Claude Code / 通用助手的完整架构说明。
+- **`.cursor/rules/`**：Cursor 项目规则（`alwaysApply`），与 `CLAUDE.md` 互补。

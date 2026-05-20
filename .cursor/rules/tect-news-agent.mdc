@@ -1,0 +1,31 @@
+---
+description: tect-news-agent 架构、采集源与开发约定（详见根目录 CLAUDE.md）
+alwaysApply: true
+---
+
+# tect-news-agent
+
+完整说明见仓库根目录 **`CLAUDE.md`**。修改采集、LLM、周报逻辑前请先读该文件。
+
+## 产品要点
+
+- 多源采集 → 可选正文 enrich / PydanticAI 打分 / CS 筛选 → **主编 JSON → Markdown**（`output/digest-<年>-W<周>.md`）。
+- 主编与打分共用 `OPENAI_*`；网关不支持 `response_format=json_object` 时会降级解析。
+- `DIGEST_STRICT_URLS=1` 时快报链接须 ⊆ 本周采集 URL 白名单。
+
+## 采集源（`pipeline.collect_articles`）
+
+| 源 | 状态 |
+|----|------|
+| RSS（默认量子位 + GitHub Blog；`RSS_FEED_URLS` 可覆盖） | 在线拉取 |
+| GitHub 仓库搜索 | 在线 API |
+| Hacker News / Lobsters / InfoQ 中文 | 在线 RSS（单源失败会 stderr 跳过，不拖垮全流程） |
+| 机器之心 `jiqizhixin` | 文章库 JSON API |
+| InfoQ 英文 | 可选 `INFOQ_INCLUDE_EN=1` |
+| 小红书 `xiaohongshu_seed` | **仅读** `data/xiaohongshu_seed.json`，无公开 API；`.env` 中 `XHS_*` 尚未接入 |
+
+## 开发约定
+
+- 新数据源：实现 `sources/base.Source`，在 `collect_articles` 注册；纯 RSS 可复用 `RssSource`。
+- 依赖：`requirements.txt` 为核心；`DIGEST_AGENT_SCORE=1` 需 Python ≥3.10 且 `requirements-agent.txt`。
+- 最小改动、匹配现有风格；勿提交 `.env` / `output/`。
