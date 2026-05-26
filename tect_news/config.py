@@ -212,7 +212,6 @@ def load_settings() -> Settings:
     else:
         openai_prompt_key = _env_bool("OPENAI_PROMPT_KEY", False)
 
-    # 迁移兼容：若用户还没把 access key 从旧的 ANTHROPIC_* 键名迁走，先继续复用。
     openai_api_key = (
         _env_secret("OPENAI_API_KEY")
         or _env_secret("SMARTINGREDIENTS_API_KEY")

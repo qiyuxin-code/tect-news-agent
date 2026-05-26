@@ -19,6 +19,18 @@ from tect_news.verification import VerificationResult, verify_urls_subset
 
 UTC = timezone.utc
 
+# 超过此条数时按来源分批调用主编，避免单次 JSON 过大被截断或语法错误。
+_EDITOR_BATCH_THRESHOLD = 24
+
+_warned_no_json_object = False
+
+_ITEM_WRITING_RULES = """- **每条 item 须「做什么 + 怎么做」**：
+  - claim = **做什么**（结论/变化/产物，≤45 字）；
+  - context = **怎么做**（机制/架构/关键工程手段，1–2 句合计≤120 字，**不得为空**）。
+- 禁止 context 只写 star 数、融资额等人气指标。
+- 每个 item 的 source_url 必须来自用户枚举的 URL，逐字一致。
+- 顶层须为**单行紧凑 JSON**；字符串内换行写 \\n。"""
+
 
 def _json_instructions(items_per_source: int) -> str:
     n = items_per_source
@@ -38,8 +50,8 @@ def _json_instructions(items_per_source: int) -> str:
       "tags": ["小节标签1", "小节标签2"],
       "items": [
         {{
-          "claim": "收敛后的一句话结论：应是你理解后的判断，不要用原标题加长或标题党复述",
-          "context": "可选：一句补充（机制、影响范围、对读者的意义）；不需要则 \\"\\"",
+          "claim": "做什么：一句话结论（发布了什么 / 解决了什么 / 核心变化；≤45 字；勿标题党复述）",
+          "context": "怎么做：1–2 句简练说明关键机制、方法、架构或实现路径（须来自候选摘要/正文；合计≤120 字）",
           "tags": ["条目标签1", "条目标签2"],
           "source_url": "必须从用户给出的 URL 列表中原样复制的一条"
         }}
@@ -64,38 +76,315 @@ sections[*].tags：0–3 个小节级标签；items[*].tags：每条 1–3 个�
 - **分桶维度是采集来源**：sections 与候选中的「## 来源: …」块一一对应；每个有候选条目的来源单独成节，不要用主题分类替代来源分类。
 - **每个来源 section 目标收录 {n} 条 item**：候选≥{n} 则选信息密度最高、技术实质最强的 {n} 条；候选<{n} 则尽量全收；不得因跨来源合并而减少各平台条目数。
 - 合并仅限**同一来源、同一事件**的重复报道（合并后仍计为 1 条）。
-- claim 要短而锋利，避免「据悉」「或将」等空泛措辞；context 用来承载必要限定条件。
-- trivia 至多 3 条：各来源 section 未收录的边角料；可空数组。
+- **每条 item 须「做什么 + 怎么做」两层信息**：
+  - claim = **做什么**（结论/变化/产物，短而具体）；
+  - context = **怎么做**（机制、算法思路、系统架构、关键工程手段、协议/接口要点等；从语料提炼，禁止空泛形容词）。
+- sections[*].items[*].context **不得为空**（除非候选仅有标题无任何技术信息）；禁止 context 只写 star 数、融资额、排名等人气指标代替技术说明。
+- 示例：claim「NVIDIA 发布 Gated DeltaNet-2，线性注意力层将 delta 规则中的 erase 与 write 解耦」；context「通过独立门控分别控制状态擦除与写入，减轻长序列下状态覆盖冲突，便于推理部署。」
+- trivia 至多 3 条：各来源 section 未收录的边角料；可空数组；trivia 的 context 仍尽量写「怎么做」，能省略则短写。
 - 每个 item 的 source_url 必须来自用户枚举的 URL，逐字一致，禁止编造链接。
 - 不要输出列表以外的字段。
 - 顶层须为**单行紧凑 JSON**（不要为了可读性换行）；各字符串值内若需换行一律写为 \\n，禁止在引号对之间出现字面换行。"""
 
 _EDITOR_ROLE = (
     "你是资深技术媒体的主笔 + 主编。你的任务不是搬运标题，而是**选题、收敛、再表达**："
-    "把大量候选压成少量高信噪比的判断，让读者用很少时间理解「本周技术世界发生了什么、为何重要」。"
-    "你只能使用用户提供的条目与 URL；无法核实的传闻不写进 claim。"
+    "把大量候选压成少量高信噪比的判断，让读者用很少时间理解「发生了什么、**技术上怎么做的**、为何重要」。"
+    "每条正文须同时交代「做什么」与「怎么做」（后者来自摘要/正文中的可核实机制，简练即可）。"
+    "你只能使用用户提供的条目与 URL；无法核实的传闻不写进 claim 或 context。"
 )
 
 
 def _full_system_instructions(settings: Settings, articles: list[Article]) -> str:
+    return _personality_prefix(settings) + _EDITOR_ROLE + "\n\n" + _json_instructions(
+        settings.digest_items_per_source
+    ) + _agent_score_note(settings, articles)
+
+
+def _personality_prefix(settings: Settings) -> str:
     pers = (settings.openai_personality or "").strip().lower()
-    prefix = ""
     if pers == "pragmatic":
-        prefix = (
+        return (
             "[写作人格: pragmatic / 务实] 优先可核对的事实与对工程师的可操作含义；"
             "少用形容词与营销腔；不确定处不写死。\n\n"
         )
-    elif (settings.openai_personality or "").strip():
-        prefix = f"[写作人格: {settings.openai_personality.strip()}]\n\n"
-    base = prefix + _EDITOR_ROLE + "\n\n" + _json_instructions(settings.digest_items_per_source)
+    if (settings.openai_personality or "").strip():
+        return f"[写作人格: {settings.openai_personality.strip()}]\n\n"
+    return ""
+
+
+def _agent_score_note(settings: Settings, articles: list[Article]) -> str:
     if settings.digest_agent_score and any(
         isinstance(a.extra, dict) and a.extra.get("digest_agent_scores") for a in articles
     ):
-        base += (
+        return (
             "\n\n[预打分] 条目块中如出现「agent分」行，为上游 PydanticAI 对各条目的草稿评分（非审计结论），"
             "仅可作选题弱先验；综述与每条 claim 仍须严格遵守「仅用语料事实」，不得仅凭分数捏造内容。\n"
         )
-    return base
+    return ""
+
+
+def _section_json_instructions() -> str:
+    return f"""输出唯一一个 JSON 对象（不要 markdown 围栏），结构如下：
+{{
+  "title": "与下方「来源: …」一致（可略作中文友好化）",
+  "tags": ["小节标签1", "小节标签2"],
+  "items": [
+    {{
+      "claim": "做什么：一句话结论",
+      "context": "怎么做：1–2 句关键机制/方法",
+      "tags": ["条目标签1"],
+      "source_url": "必须从用户 URL 列表原样复制"
+    }}
+  ]
+}}
+sections[*].tags：0–3 个；items[*].tags：1–3 个。
+候选已预筛选：**须为每条候选各写一条 item，不要删减**。
+{_ITEM_WRITING_RULES}"""
+
+
+def _overview_json_instructions() -> str:
+    return """输出唯一一个 JSON 对象（不要 markdown 围栏），结构如下：
+{
+  "headline": "本周一句话标题（≤32 字）",
+  "keywords": ["关键词1", "..."],
+  "summary_paragraphs": ["第一段…", "第二段…"],
+  "trivia": []
+}
+keywords：6–12 个中文短语（每条 2–8 字）。
+summary_paragraphs：2–4 段主编综述，串联下方各来源 claim 的主线；禁止 http/裸 URL。
+trivia 至多 3 条或空数组。
+单行紧凑 JSON。"""
+
+
+def _section_system_instructions(settings: Settings) -> str:
+    return (
+        _personality_prefix(settings)
+        + _EDITOR_ROLE
+        + "\n\n"
+        + _section_json_instructions()
+    )
+
+
+def _overview_system_instructions(settings: Settings) -> str:
+    return _personality_prefix(settings) + _EDITOR_ROLE + "\n\n" + _overview_json_instructions()
+
+
+def _group_articles_by_source(articles: list[Article]) -> list[tuple[str, list[Article]]]:
+    by_source: dict[str, list[Article]] = defaultdict(list)
+    for a in articles:
+        by_source[a.source].append(a)
+    return [(k, by_source[k]) for k in sorted(by_source)]
+
+
+def _section_outline_for_overview(sections: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for sec in sections:
+        title = str(sec.get("title") or "").strip()
+        items = sec.get("items") or []
+        lines = [
+            f"- {str(it.get('claim') or '').strip()}"
+            for it in items
+            if isinstance(it, dict) and str(it.get("claim") or "").strip()
+        ]
+        if title and lines:
+            parts.append(f"## {title}\n" + "\n".join(lines))
+    return "\n\n".join(parts) if parts else "(无)"
+
+
+def _normalize_section_payload(data: dict[str, Any], *, fallback_title: str) -> dict[str, Any]:
+    title = str(data.get("title") or fallback_title).strip() or fallback_title
+    items_out: list[dict[str, str]] = []
+    items_in = data.get("items")
+    if isinstance(items_in, list):
+        for it in items_in:
+            if not isinstance(it, dict):
+                continue
+            su = str(it.get("source_url") or "").strip()
+            if not su:
+                continue
+            items_out.append(
+                {
+                    "claim": str(it.get("claim") or "").strip(),
+                    "context": str(it.get("context") or "").strip(),
+                    "tags": _normalize_tags(it.get("tags"), max_n=3),
+                    "source_url": su,
+                }
+            )
+    return {
+        "title": title,
+        "tags": _normalize_tags(data.get("tags"), max_n=3),
+        "items": items_out,
+    }
+
+
+def _call_editor_llm(
+    client: OpenAI,
+    settings: Settings,
+    api_base: str,
+    system_instructions: str,
+    user_content: str,
+    *,
+    token_budget: int,
+) -> tuple[str, str | None]:
+    wire = settings.openai_wire_api
+    if wire == "responses":
+        kwargs: dict[str, Any] = {
+            "model": settings.openai_model,
+            "instructions": system_instructions,
+            "input": user_content,
+            "temperature": settings.digest_llm_temperature,
+            "text": {"format": {"type": "json_object"}},
+        }
+        effort = (settings.openai_reasoning_effort or "").strip()
+        if effort:
+            kwargs["reasoning"] = {"effort": effort}
+        try:
+            resp = client.responses.create(**kwargs)
+            return resp.output_text, None
+        except PermissionDeniedError as pde:
+            if not settings.openai_responses_fallback_chat:
+                raise RuntimeError(
+                    "/v1/responses 被拒绝（403 / Your request was blocked）。"
+                    "请改用 OPENAI_WIRE_API=chat。"
+                ) from pde
+            print(
+                "tect_news: /v1/responses 不可用，已回退到 /v1/chat/completions。",
+                file=sys.stderr,
+            )
+    try:
+        return _chat_completion_json(
+            client,
+            settings,
+            system_instructions,
+            user_content,
+            max_completion_tokens=token_budget,
+        )
+    except AuthenticationError as err:
+        if "api.openai.com" in api_base:
+            raise RuntimeError(
+                "401：请求发往 OpenAI 官方地址。请检查 .env 中的 OPENAI_BASE_URL 与 API key。"
+            ) from err
+        raise
+
+
+def _token_budget_for_batch(*, item_count: int, base: int) -> int:
+    return min(32_768, max(base, item_count * 420 + 2048))
+
+
+def _llm_one_section_draft(
+    settings: Settings,
+    client: OpenAI,
+    api_base: str,
+    *,
+    source: str,
+    batch: list[Article],
+    week_label: str,
+) -> dict[str, Any]:
+    system = _section_system_instructions(settings)
+    user = "\n\n".join(
+        [
+            f"本周标识: {week_label}",
+            f"来源: {source}",
+            "为下列每条候选各写一条 item（claim + context 必填）：",
+            _articles_prompt_block(batch, items_per_source=len(batch)),
+            "你必须只使用下列 URL 作为 source_url（原样复制）：",
+            _numbered_urls(batch),
+        ]
+    )
+    token_budget = _token_budget_for_batch(
+        item_count=len(batch), base=settings.digest_llm_max_completion_tokens
+    )
+    retry_tail = ""
+    last_err: RuntimeError | None = None
+    for attempt in range(2):
+        user_block = user + (("\n\n" + retry_tail) if retry_tail else "")
+        message, finish_reason = _call_editor_llm(
+            client, settings, api_base, system, user_block, token_budget=token_budget
+        )
+        if not message:
+            raise RuntimeError(f"来源 {source!r} 主编返回为空")
+        try:
+            data = _parse_json_object(message)
+            if not isinstance(data, dict):
+                raise RuntimeError("section JSON 根须为对象")
+            return _normalize_section_payload(data, fallback_title=source)
+        except RuntimeError as err:
+            last_err = err
+            if attempt == 0:
+                print(
+                    f"tect_news: 来源 {source!r} JSON 解析失败"
+                    + (f"（finish={finish_reason}）" if finish_reason else "")
+                    + "，重试一次。",
+                    file=sys.stderr,
+                )
+                token_budget = min(32_768, token_budget + 4096)
+                retry_tail = (
+                    "重要：上一轮 JSON 无效或未闭合。请输出**完整单行**合法 JSON；"
+                    "items 数量须与候选条数一致；字符串内勿出现未转义换行或引号。"
+                )
+                continue
+            raise
+    assert last_err is not None
+    raise last_err
+
+
+def _llm_overview_draft(
+    settings: Settings,
+    client: OpenAI,
+    api_base: str,
+    *,
+    week_label: str,
+    sections: list[dict[str, Any]],
+) -> dict[str, Any]:
+    system = _overview_system_instructions(settings)
+    user = "\n\n".join(
+        [
+            f"本周标识: {week_label}",
+            "各来源条目 claim 如下，请写 headline、keywords、summary_paragraphs（2–4 段）：",
+            _section_outline_for_overview(sections),
+        ]
+    )
+    token_budget = min(8192, settings.digest_llm_max_completion_tokens)
+    message, _fr = _call_editor_llm(
+        client, settings, api_base, system, user, token_budget=token_budget
+    )
+    if not message:
+        raise RuntimeError("综述 JSON 返回为空")
+    data = _parse_json_object(message)
+    norm = _normalize_draft(
+        {
+            "headline": data.get("headline"),
+            "keywords": data.get("keywords"),
+            "summary_paragraphs": data.get("summary_paragraphs"),
+            "sections": [],
+            "trivia": data.get("trivia"),
+        }
+    )
+    return norm
+
+
+def _llm_json_draft_by_source(
+    settings: Settings, articles: list[Article], week_label: str
+) -> dict[str, Any]:
+    client, api_base = _openai_client_for_digest(settings)
+    sections: list[dict[str, Any]] = []
+    for source, batch in _group_articles_by_source(articles):
+        print(f"tect_news: 主编分批 → 来源 {source!r}（{len(batch)} 条）", file=sys.stderr)
+        sections.append(
+            _llm_one_section_draft(
+                settings,
+                client,
+                api_base,
+                source=source,
+                batch=batch,
+                week_label=week_label,
+            )
+        )
+    overview = _llm_overview_draft(
+        settings, client, api_base, week_label=week_label, sections=sections
+    )
+    overview["sections"] = sections
+    return overview
 
 
 @dataclass
@@ -111,7 +400,7 @@ EDITOR_WORKFLOW = """请先在心里按下列步骤执行（不必输出步骤�
 2) 收敛：仅在同一来源内合并同一事件的重复报道；跨来源的相似话题**不要**合并为一条。
 3) 分桶：每个采集来源单独成 section，与候选来源块一一对应。
 4) 综述：用主编口吻写 2-4 段，串联跨来源主线与张力，避免「如下」「此外」式清单感。
-5) 定稿：各来源 section 按配额收录条目；每条 claim 可独立阅读；链接仅作证据锚点，正文由你负责精炼。"""
+5) 定稿：各来源 section 按配额收录条目；每条 item 的 claim 写「做什么」、context 写「怎么做」；两句合读应能懂技术要点；链接仅作证据锚点。"""
 
 
 def _articles_prompt_block(articles: list[Article], *, items_per_source: int) -> str:
@@ -412,7 +701,7 @@ def _render_markdown(draft: dict[str, Any], url_to_title: dict[str, str]) -> str
             tags_s = _format_item_tags(it.get("tags") or [])
             body = f"**{claim}**{tags_s}"
             if ctx:
-                body += f"  \n{ctx}"
+                body += f"  \n怎么做：{ctx}"
             parts.append(f"- {body}  \n  [{lt}]({su})\n")
 
     trivia = draft.get("trivia") or []
@@ -426,7 +715,7 @@ def _render_markdown(draft: dict[str, Any], url_to_title: dict[str, str]) -> str
             tags_s = _format_item_tags(it.get("tags") or [])
             body = f"**{claim}**{tags_s}"
             if ctx:
-                body += f"  \n{ctx}"
+                body += f"  \n怎么做：{ctx}"
             parts.append(f"- {body}  \n  [{lt}]({su})\n")
 
     return "".join(parts).strip() + "\n"
@@ -468,13 +757,16 @@ def _chat_completion_json(
     try:
         completion = client.chat.completions.create(**kwargs)
     except BadRequestError as bre:
+        global _warned_no_json_object
         if kwargs.get("response_format") is not None and _unsupported_json_response_format(
             bre
         ):
-            print(
-                "tect_news: 网关不支持 response_format=json_object，已降级为自由文本并从内容解析 JSON。",
-                file=sys.stderr,
-            )
+            if not _warned_no_json_object:
+                print(
+                    "tect_news: 网关不支持 response_format=json_object，已降级为自由文本并从内容解析 JSON。",
+                    file=sys.stderr,
+                )
+                _warned_no_json_object = True
             retry = {k: v for k, v in kwargs.items() if k != "response_format"}
             completion = client.chat.completions.create(**retry)
         else:
@@ -674,18 +966,22 @@ def filter_articles_by_cs_depth(
     return out
 
 
-def _llm_json_draft(settings: Settings, articles: list[Article], week_label: str) -> dict[str, Any]:
+def _llm_json_draft_monolithic(
+    settings: Settings, articles: list[Article], week_label: str
+) -> dict[str, Any]:
     client, api_base = _openai_client_for_digest(settings)
     system_instructions = _full_system_instructions(settings, articles)
     if settings.digest_professional_mode:
         quota_note = (
             f"候选已由 CS 专业性评分为每来源 Top-{settings.digest_items_per_source}。"
             "sections 须与「## 来源: …」一一对应，并尽量为每条候选各写一条 item（不要二次大幅删减）。"
+            "每条 item 必须同时填写 claim（做什么）与 context（怎么做/关键机制），context 禁止留空或只写 stars。"
         )
         candidate_intro = "下面是经专业模式筛选后的候选（按来源分组）："
     else:
         quota_note = (
             f"各采集来源在快报 sections 中目标收录最多 {settings.digest_items_per_source} 条 item。"
+            "每条须 claim（做什么）+ context（怎么做），context 禁止留空或只写人气数据。"
         )
         candidate_intro = "下面是本周候选条目（按来源分组；你需要在各来源配额内选题与精炼）："
     user_content = "\n\n".join(
@@ -699,65 +995,22 @@ def _llm_json_draft(settings: Settings, articles: list[Article], week_label: str
             _numbered_urls(articles),
         ]
     )
-    wire = settings.openai_wire_api
-    token_budget = settings.digest_llm_max_completion_tokens
+    token_budget = _token_budget_for_batch(
+        item_count=len(articles), base=settings.digest_llm_max_completion_tokens
+    )
     retry_tail = ""
     last_parse_err: RuntimeError | None = None
 
     for attempt in range(2):
         user_block = user_content + (("\n\n" + retry_tail) if retry_tail else "")
-        message = ""
-        finish_reason: str | None = None
-        try:
-            if wire == "responses":
-                kwargs = {
-                    "model": settings.openai_model,
-                    "instructions": system_instructions,
-                    "input": user_block,
-                    "temperature": settings.digest_llm_temperature,
-                    "text": {"format": {"type": "json_object"}},
-                }
-                effort = (settings.openai_reasoning_effort or "").strip()
-                if effort:
-                    kwargs["reasoning"] = {"effort": effort}
-                try:
-                    resp = client.responses.create(**kwargs)
-                    message = resp.output_text
-                except PermissionDeniedError as pde:
-                    if not settings.openai_responses_fallback_chat:
-                        raise RuntimeError(
-                            "/v1/responses 被拒绝（403 / Your request was blocked）。"
-                            "多数兼容网关未开放该路由或触发风控。请改用 OPENAI_WIRE_API=chat，"
-                            "或保留默认 OPENAI_RESPONSES_FALLBACK_CHAT=1 以自动回退到 chat.completions。"
-                        ) from pde
-                    print(
-                        "tect_news: /v1/responses 不可用，已回退到 /v1/chat/completions（推理 effort 仅在 responses 下生效）。",
-                        file=sys.stderr,
-                    )
-                    message, finish_reason = _chat_completion_json(
-                        client,
-                        settings,
-                        system_instructions,
-                        user_block,
-                        max_completion_tokens=token_budget,
-                    )
-            else:
-                message, finish_reason = _chat_completion_json(
-                    client,
-                    settings,
-                    system_instructions,
-                    user_block,
-                    max_completion_tokens=token_budget,
-                )
-        except AuthenticationError as err:
-            if "api.openai.com" in api_base:
-                raise RuntimeError(
-                    "401：请求发往 OpenAI 官方地址。请检查 .env："
-                    "勿留空的 OPENAI_BASE_URL=；并设置 OPENAI_PROVIDER_PROFILE=smartingredients "
-                    "或显式 OPENAI_BASE_URL=https://ai.smartingredients.my/v1。"
-                    "官方 OpenAI 的 key 与 SmartIngredients access key 不通用。"
-                ) from err
-            raise
+        message, finish_reason = _call_editor_llm(
+            client,
+            settings,
+            api_base,
+            system_instructions,
+            user_block,
+            token_budget=token_budget,
+        )
         if not message:
             raise RuntimeError("模型返回为空")
         try:
@@ -765,24 +1018,42 @@ def _llm_json_draft(settings: Settings, articles: list[Article], week_label: str
             return _normalize_draft(data)
         except RuntimeError as err:
             last_parse_err = err
-            if (
-                attempt == 0
-                and wire != "responses"
-                and finish_reason == "length"
-            ):
+            if attempt == 0:
                 print(
-                    "tect_news: 主编输出疑似因输出长度上限被截断，已加大上限并重试一次。",
+                    "tect_news: 主编单次 JSON 解析失败"
+                    + (f"（finish={finish_reason}）" if finish_reason else "")
+                    + "，加大输出上限并重试。",
                     file=sys.stderr,
                 )
                 token_budget = min(32_768, max(token_budget * 2, token_budget + 4096))
                 retry_tail = (
-                    "重要：上一轮 JSON 在中途被截断。请输出**完整**、**单行**合法 JSON；"
-                    "summary 与 claim 可略写，但结构须闭合；字符串内换行只能用 \\n，禁止未闭合引号。"
+                    "重要：上一轮 JSON 无效或未闭合。请输出**完整单行**合法 JSON；"
+                    "summary 与 claim 可略写，但结构须闭合；字符串内换行只能用 \\n。"
                 )
                 continue
             raise
     assert last_parse_err is not None
     raise last_parse_err
+
+
+def _llm_json_draft(settings: Settings, articles: list[Article], week_label: str) -> dict[str, Any]:
+    if len(articles) > _EDITOR_BATCH_THRESHOLD:
+        print(
+            f"tect_news: 候选 {len(articles)} 条（>{_EDITOR_BATCH_THRESHOLD}），"
+            "按来源分批生成主编 JSON。",
+            file=sys.stderr,
+        )
+        return _llm_json_draft_by_source(settings, articles, week_label)
+    try:
+        return _llm_json_draft_monolithic(settings, articles, week_label)
+    except RuntimeError as err:
+        if "JSON 无法解析" in str(err) or "返回为空" in str(err):
+            print(
+                "tect_news: 单次主编 JSON 失败，回退为按来源分批生成。",
+                file=sys.stderr,
+            )
+            return _llm_json_draft_by_source(settings, articles, week_label)
+        raise
 
 
 def generate_digest_bundle(
