@@ -4,6 +4,7 @@ from tect_news.sources.hackernews import HackerNewsSource
 from tect_news.sources.infoq import InfoQSource
 from tect_news.sources.jiqizhixin import JiqizhixinSource
 from tect_news.sources.lobsters import LobstersSource
+from tect_news.sources.marktechpost import MarktechpostSource
 from tect_news.sources.rss import RssSource
 from tect_news.sources.xiaohongshu import XiaohongshuSeedSource
 
@@ -14,6 +15,7 @@ __all__ = [
     "XiaohongshuSeedSource",
     "HackerNewsSource",
     "LobstersSource",
+    "MarktechpostSource",
     "InfoQSource",
     "JiqizhixinSource",
 ]

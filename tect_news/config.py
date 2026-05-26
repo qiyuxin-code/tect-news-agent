@@ -45,6 +45,10 @@ class Settings:
     digest_cs_filter: bool
     digest_cs_min_score: int
     digest_cs_top_k: int
+    digest_items_per_source: int
+    digest_professional_mode: bool
+    digest_collect_max_per_source: int
+    digest_collect_lookback_days: int
     digest_agent_score: bool
     digest_agent_score_max_articles: int
     digest_agent_score_batch_size: int
@@ -243,7 +247,7 @@ def load_settings() -> Settings:
         digest_llm_temperature=_env_float("DIGEST_LLM_TEMPERATURE", 0.35),
         digest_llm_max_completion_tokens=min(
             128_000,
-            max(1024, _env_int("DIGEST_LLM_MAX_COMPLETION_TOKENS", 8192)),
+            max(1024, _env_int("DIGEST_LLM_MAX_COMPLETION_TOKENS", 16384)),
         ),
         digest_fetch_body=_env_bool("DIGEST_FETCH_BODY", True),
         digest_fetch_max_articles=max(0, _env_int("DIGEST_FETCH_MAX_ARTICLES", 40)),
@@ -256,6 +260,10 @@ def load_settings() -> Settings:
         digest_cs_filter=_env_bool("DIGEST_CS_FILTER", False),
         digest_cs_min_score=min(5, max(1, _env_int("DIGEST_CS_MIN_SCORE", 3))),
         digest_cs_top_k=max(0, _env_int("DIGEST_CS_TOP_K", 0)),
+        digest_items_per_source=max(1, _env_int("DIGEST_ITEMS_PER_SOURCE", 20)),
+        digest_professional_mode=_env_bool("DIGEST_PROFESSIONAL_MODE", True),
+        digest_collect_max_per_source=max(1, _env_int("DIGEST_COLLECT_MAX_PER_SOURCE", 100)),
+        digest_collect_lookback_days=max(1, _env_int("DIGEST_COLLECT_LOOKBACK_DAYS", 90)),
         digest_agent_score=_env_bool("DIGEST_AGENT_SCORE", False),
         digest_agent_score_max_articles=max(0, _env_int("DIGEST_AGENT_SCORE_MAX_ARTICLES", 48)),
         digest_agent_score_batch_size=max(4, _env_int("DIGEST_AGENT_SCORE_BATCH_SIZE", 18)),

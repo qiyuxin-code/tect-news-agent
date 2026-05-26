@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from tect_news.article_pool import select_for_body_fetch
 from tect_news.config import Settings
 from tect_news.models import Article
 
@@ -85,15 +86,16 @@ def enrich_article_bodies(
             log(msg)
 
     max_n = max(0, settings.digest_fetch_max_articles)
-    if max_n == 0:
+    if max_n == 0 and not settings.digest_professional_mode:
         return
 
-    ordered = sorted(
-        articles,
-        key=lambda a: a.published_at or datetime.min.replace(tzinfo=UTC),
-        reverse=True,
-    )
-    to_fetch = ordered[:max_n]
+    if settings.digest_professional_mode:
+        pool_cap = max(1, settings.digest_collect_max_per_source)
+        to_fetch = select_for_body_fetch(articles, max_per_source=pool_cap)
+    else:
+        if max_n == 0:
+            return
+        to_fetch = select_for_body_fetch(articles, max_global=max_n)
     skip_ids = {id(a) for a in articles} - {id(a) for a in to_fetch}
     for a in articles:
         if id(a) in skip_ids:
@@ -123,4 +125,11 @@ def enrich_article_bodies(
             fut.result()
 
     ok = sum(1 for a in to_fetch if a.extra.get("body_fetch_status") == "ok")
-    _log(f"tect_news: 正文抓取完成 {ok}/{len(to_fetch)}（上限 {max_n} 条）。")
+    if settings.digest_professional_mode:
+        cap = settings.digest_collect_max_per_source
+        _log(
+            f"tect_news: 正文抓取完成 {ok}/{len(to_fetch)}"
+            f"（专业模式：每来源最多 {cap} 条）。"
+        )
+    else:
+        _log(f"tect_news: 正文抓取完成 {ok}/{len(to_fetch)}（上限 {max_n} 条）。")

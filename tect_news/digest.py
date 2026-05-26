@@ -19,8 +19,11 @@ from tect_news.verification import VerificationResult, verify_urls_subset
 
 UTC = timezone.utc
 
-JSON_INSTRUCTIONS = """输出唯一一个 JSON 对象（不要 markdown 围栏），结构如下：
-{
+
+def _json_instructions(items_per_source: int) -> str:
+    n = items_per_source
+    return f"""输出唯一一个 JSON 对象（不要 markdown 围栏），结构如下：
+{{
   "headline": "本周一句话标题（≤32 字，概括主线，不用感叹号堆砌）",
   "keywords": ["关键词1", "关键词2", "..."],
   "summary_paragraphs": [
@@ -30,38 +33,39 @@ JSON_INSTRUCTIONS = """输出唯一一个 JSON 对象（不要 markdown 围栏�
     "可选第四段……"
   ],
   "sections": [
-    {
-      "title": "主题小节标题（可自拟，体现归类逻辑，如「模型与范式」「工程与开源」「云与基础设施」）",
+    {{
+      "title": "与候选「## 来源: …」中的来源名一致（可略作中文友好化，但须能对应回该来源）",
       "tags": ["小节标签1", "小节标签2"],
       "items": [
-        {
+        {{
           "claim": "收敛后的一句话结论：应是你理解后的判断，不要用原标题加长或标题党复述",
-          "context": "可选：一句补充（机制、影响范围、对读者的意义）；不需要则 \"\"",
+          "context": "可选：一句补充（机制、影响范围、对读者的意义）；不需要则 \\"\\"",
           "tags": ["条目标签1", "条目标签2"],
           "source_url": "必须从用户给出的 URL 列表中原样复制的一条"
-        }
+        }}
       ]
-    }
+    }}
   ],
   "trivia": [
-    {
+    {{
       "claim": "...",
       "context": "",
       "tags": [],
       "source_url": "同上，须来自列表"
-    }
+    }}
   ]
-}
+}}
 keywords：6–12 个**中文短语**（每条 2–8 字），覆盖本周技术主线（如「大模型」「开源」「安全」「云原生」），禁止空泛词（「科技」「动态」）。
 sections[*].tags：0–3 个小节级标签；items[*].tags：每条 1–3 个更细标签，须与 claim 内容一致。
 对 summary_paragraphs 的正文要求：先写「本周最值得关注的 2-3 条技术脉络/矛盾/共识」，再点出跨领域的共同点；像编辑手记（归纳、串联），禁止出现 http 或裸 URL；事实与判断须与候选条目及下文 claim 对齐，禁止凭空主体或编造数字。
 
 编辑约束（与简单聚合的区别）：
 - 先在心里完成「选题」：本周真正重要的变化是什么？哪些是噪声或重复报道？
-- 同一事件、同一技术线若有多条来源，**合并为一条 item**：claim 写合并后的精炼结论，**source_url 只保留一条最能代表/信息密度最高的原文**。
-- 每个「sections[*].title」下优先 4-8 条高质量 item；宁缺毋滥，不要把所有来源都塞进去。
+- **分桶维度是采集来源**：sections 与候选中的「## 来源: …」块一一对应；每个有候选条目的来源单独成节，不要用主题分类替代来源分类。
+- **每个来源 section 目标收录 {n} 条 item**：候选≥{n} 则选信息密度最高、技术实质最强的 {n} 条；候选<{n} 则尽量全收；不得因跨来源合并而减少各平台条目数。
+- 合并仅限**同一来源、同一事件**的重复报道（合并后仍计为 1 条）。
 - claim 要短而锋利，避免「据悉」「或将」等空泛措辞；context 用来承载必要限定条件。
-- trivia 至多 3 条：边角但有信息量；可空数组。
+- trivia 至多 3 条：各来源 section 未收录的边角料；可空数组。
 - 每个 item 的 source_url 必须来自用户枚举的 URL，逐字一致，禁止编造链接。
 - 不要输出列表以外的字段。
 - 顶层须为**单行紧凑 JSON**（不要为了可读性换行）；各字符串值内若需换行一律写为 \\n，禁止在引号对之间出现字面换行。"""
@@ -83,7 +87,7 @@ def _full_system_instructions(settings: Settings, articles: list[Article]) -> st
         )
     elif (settings.openai_personality or "").strip():
         prefix = f"[写作人格: {settings.openai_personality.strip()}]\n\n"
-    base = prefix + _EDITOR_ROLE + "\n\n" + JSON_INSTRUCTIONS
+    base = prefix + _EDITOR_ROLE + "\n\n" + _json_instructions(settings.digest_items_per_source)
     if settings.digest_agent_score and any(
         isinstance(a.extra, dict) and a.extra.get("digest_agent_scores") for a in articles
     ):
@@ -103,20 +107,24 @@ class DigestBundle:
 
 
 EDITOR_WORKFLOW = """请先在心里按下列步骤执行（不必输出步骤，只输出最终 JSON）：
-1) 通读候选：标出「主线话题」与「重复/低信息」条目。
-2) 收敛：同一脉络多来源合并；删掉明显的标题党、纯公关、与本周技术主线无关的噪音。
-3) 分桶：用少量主题小节承载大类，不要把媒体来源当分类维度。
-4) 综述：用主编口吻写 2-4 段，串联主线与张力，避免「如下」「此外」式清单感。
-5) 定稿：每条 claim 可独立阅读；链接仅作证据锚点，正文由你负责精炼。"""
+1) 通读候选：按「## 来源: …」分块，标出各来源内「主线话题」与「重复/低信息」条目。
+2) 收敛：仅在同一来源内合并同一事件的重复报道；跨来源的相似话题**不要**合并为一条。
+3) 分桶：每个采集来源单独成 section，与候选来源块一一对应。
+4) 综述：用主编口吻写 2-4 段，串联跨来源主线与张力，避免「如下」「此外」式清单感。
+5) 定稿：各来源 section 按配额收录条目；每条 claim 可独立阅读；链接仅作证据锚点，正文由你负责精炼。"""
 
 
-def _articles_prompt_block(articles: list[Article]) -> str:
+def _articles_prompt_block(articles: list[Article], *, items_per_source: int) -> str:
     lines: list[str] = []
     by_source: dict[str, list[Article]] = defaultdict(list)
     for a in articles:
         by_source[a.source].append(a)
+    quota = items_per_source
     for source in sorted(by_source.keys()):
-        lines.append(f"## 来源: {source}")
+        batch = by_source[source]
+        lines.append(
+            f"## 来源: {source}（候选 {len(batch)} 条，快报目标收录最多 {quota} 条）"
+        )
         for a in by_source[source]:
             ts = a.published_at.isoformat() if a.published_at else "?"
             sm = (a.summary or "").replace("\n", " ")
@@ -126,6 +134,9 @@ def _articles_prompt_block(articles: list[Article]) -> str:
             scr = format_score_inline(a.extra) if isinstance(a.extra, dict) else None
             if scr:
                 score_s = f" | {scr}"
+            cs = a.extra.get("cs_depth_score") if isinstance(a.extra, dict) else None
+            if cs is not None:
+                score_s += f" | cs={cs}"
             lines.append(f"- [{a.title}]({a.url}) | {ts}{tail}{score_s}")
             if sm:
                 lines.append(f"  摘要: {sm[:400]}")
@@ -505,17 +516,15 @@ def _article_teaser_text(a: Article, max_chars: int) -> str:
     return sm[:max_chars].strip()
 
 
-def filter_articles_by_cs_depth(
+def score_articles_cs_depth(
     settings: Settings,
     articles: list[Article],
     *,
     log: Callable[[str], None] | None = None,
-) -> list[Article]:
-    """DIGEST_CS_FILTER 开启时调用模型打分并筛选（可选 TOP_K）。"""
-    if not settings.digest_cs_filter:
-        return articles
+) -> list[tuple[Article, int]]:
+    """对全部条目打 CS 深度分（1–5），写入 ``extra['cs_depth_score']``。"""
     if not articles:
-        return articles
+        return []
 
     def _say(msg: str) -> None:
         if log:
@@ -528,7 +537,7 @@ def filter_articles_by_cs_depth(
 
     for start in range(0, len(articles), batch):
         chunk = articles[start : start + batch]
-        base_idx = start + 1  # 1-based global index
+        base_idx = start + 1
         lines: list[str] = []
         for i, art in enumerate(chunk):
             gid = base_idx + i
@@ -564,15 +573,86 @@ def filter_articles_by_cs_depth(
             sc_i = min(5, max(1, sc_i))
             all_scores[idx_i] = sc_i
 
-    retained: list[tuple[Article, int]] = []
+    scored: list[tuple[Article, int]] = []
     for i, art in enumerate(articles):
         sc = all_scores.get(i + 1)
         if sc is None:
             _say(f"tect_news: cs 打分缺失 index={i + 1}，按 Neutral=3 保留。")
             sc = 3
-        retained.append((art, sc))
+        if not isinstance(art.extra, dict):
+            art.extra = {}
+        art.extra["cs_depth_score"] = sc
+        scored.append((art, sc))
+    return scored
 
-    passed = [(a, s) for a, s in retained if s >= settings.digest_cs_min_score]
+
+def _top_k_per_source(
+    scored: list[tuple[Article, int]],
+    *,
+    k: int,
+    min_score: int,
+) -> list[Article]:
+    by_source: dict[str, list[tuple[Article, int]]] = defaultdict(list)
+    for art, sc in scored:
+        by_source[art.source].append((art, sc))
+    out: list[Article] = []
+    for source in sorted(by_source):
+        passed = [(a, s) for a, s in by_source[source] if s >= min_score]
+        passed.sort(
+            key=lambda t: (
+                -t[1],
+                -(t[0].published_at.timestamp() if t[0].published_at else 0),
+            )
+        )
+        out.extend(a for a, _s in passed[:k])
+    return out
+
+
+def filter_articles_professional(
+    settings: Settings,
+    articles: list[Article],
+    *,
+    log: Callable[[str], None] | None = None,
+) -> list[Article]:
+    """专业模式：每来源 CS 打分后取 Top-K（``digest_items_per_source``）。"""
+    if not settings.digest_professional_mode or not articles:
+        return articles
+
+    def _say(msg: str) -> None:
+        if log:
+            log(msg)
+
+    scored = score_articles_cs_depth(settings, articles, log=log)
+    k = settings.digest_items_per_source
+    out = _top_k_per_source(
+        scored, k=k, min_score=settings.digest_cs_min_score
+    )
+    _say(
+        "tect_news: 专业模式筛选 "
+        f"每来源 CS Top-{k}（min_score≥{settings.digest_cs_min_score}）"
+        f" → {len(out)}/{len(articles)}。"
+    )
+    return out
+
+
+def filter_articles_by_cs_depth(
+    settings: Settings,
+    articles: list[Article],
+    *,
+    log: Callable[[str], None] | None = None,
+) -> list[Article]:
+    """DIGEST_CS_FILTER 开启时调用模型打分并筛选（可选全局 TOP_K）。"""
+    if not settings.digest_cs_filter:
+        return articles
+    if not articles:
+        return articles
+
+    def _say(msg: str) -> None:
+        if log:
+            log(msg)
+
+    scored = score_articles_cs_depth(settings, articles, log=log)
+    passed = [(a, s) for a, s in scored if s >= settings.digest_cs_min_score]
     if settings.digest_cs_top_k > 0:
         stable = sorted(enumerate(passed), key=lambda x: (-x[1][1], x[0]))
         stable = stable[: settings.digest_cs_top_k]
@@ -597,12 +677,24 @@ def filter_articles_by_cs_depth(
 def _llm_json_draft(settings: Settings, articles: list[Article], week_label: str) -> dict[str, Any]:
     client, api_base = _openai_client_for_digest(settings)
     system_instructions = _full_system_instructions(settings, articles)
+    if settings.digest_professional_mode:
+        quota_note = (
+            f"候选已由 CS 专业性评分为每来源 Top-{settings.digest_items_per_source}。"
+            "sections 须与「## 来源: …」一一对应，并尽量为每条候选各写一条 item（不要二次大幅删减）。"
+        )
+        candidate_intro = "下面是经专业模式筛选后的候选（按来源分组）："
+    else:
+        quota_note = (
+            f"各采集来源在快报 sections 中目标收录最多 {settings.digest_items_per_source} 条 item。"
+        )
+        candidate_intro = "下面是本周候选条目（按来源分组；你需要在各来源配额内选题与精炼）："
     user_content = "\n\n".join(
         [
             f"本周标识: {week_label}",
             EDITOR_WORKFLOW,
-            "下面是本周候选条目（噪声与重复较多；你需要选题与收敛）：",
-            _articles_prompt_block(articles),
+            quota_note,
+            candidate_intro,
+            _articles_prompt_block(articles, items_per_source=settings.digest_items_per_source),
             "你必须只使用下列 URL 作为 source_url（原样复制）：",
             _numbered_urls(articles),
         ]

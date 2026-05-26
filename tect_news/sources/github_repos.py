@@ -24,17 +24,19 @@ class GitHubRepoSource(Source):
         token: str | None,
         digest_tz: ZoneInfo,
         min_stars: int = 300,
+        per_page: int = 20,
     ) -> None:
         self.api_base = api_base.rstrip("/")
         self.token = token
         self.digest_tz = digest_tz
         self.min_stars = min_stars
+        self._per_page = min(100, max(1, per_page))
 
     def fetch(self, since_utc: datetime, until_utc: datetime) -> list[Article]:
         since = since_utc.astimezone(self.digest_tz).date().isoformat()
         # pushed 窗口近似「本周有活动」；可在后续换成更精细的过滤
         q = f"pushed:>{since} stars:>={self.min_stars}"
-        url = f"{self.api_base}/search/repositories?q={quote_plus(q)}&sort=updated&order=desc&per_page=20"
+        url = f"{self.api_base}/search/repositories?q={quote_plus(q)}&sort=updated&order=desc&per_page={self._per_page}"
         headers: dict[str, str] = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",

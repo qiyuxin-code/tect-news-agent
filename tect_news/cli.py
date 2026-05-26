@@ -7,9 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tect_news.config import load_settings
+from tect_news.pipeline import (
+    apply_collection_pool,
+    collect_articles,
+    collection_bounds,
+    default_seed_path,
+    run_pipeline,
+)
 from tect_news.digest import week_label_for
-from tect_news.pipeline import collect_articles, default_seed_path, run_pipeline
-from tect_news.time_window import week_bounds_utc
 
 UTC = timezone.utc
 
@@ -43,15 +48,22 @@ def main() -> None:
         settings = replace(settings, openai_api_key=key)
 
     now = datetime.now(UTC)
-    since, until = week_bounds_utc(now, settings.digest_tz)
+    week_since, until, collect_since = collection_bounds(settings, now)
     root = Path(__file__).resolve().parent.parent
     seed = args.xiaohongshu_seed or default_seed_path(root)
 
-    collected = collect_articles(settings, since_utc=since, until_utc=until, seed_path=seed)
+    collected = collect_articles(
+        settings, since_utc=collect_since, until_utc=until, seed_path=seed
+    )
+    collected = apply_collection_pool(settings, collected, log=None)
 
     if args.dry_collect:
         wl = week_label_for(settings.digest_tz, now)
-        print(f"week={wl} count={len(collected)} window=[{since}, {until})")
+        mode = "professional" if settings.digest_professional_mode else "weekly"
+        print(
+            f"week={wl} mode={mode} count={len(collected)} "
+            f"window=[{week_since}, {until}) collect_since={collect_since}"
+        )
         for a in collected[:80]:
             print(f"- [{a.source}] {a.title} {a.url}")
         if len(collected) > 80:
