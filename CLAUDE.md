@@ -128,7 +128,7 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 
 - **依赖文件**：`requirements.txt` 为核心（含 `python-dotenv`）；**PydanticAI 打分**用 `requirements-agent.txt`；`requirements-full.txt` 为二者合并。避免因 `pydantic-ai` 传递依赖过多导致一次安装易断网失败。
 - **新数据源**：实现 `sources/base.Source`，在 `collect_articles` 列表中注册；纯 RSS 可复用 `RssSource`。
-- **密钥与 profile**：默认 `OPENAI_PROVIDER_PROFILE` 常为 `volcengine`（方舟 Coding）；可切 `smartingredients` 等，见 `config.load_settings`。兼容键名：`SMARTINGREDIENTS_*`、`ANTHROPIC_*` 仅作密钥回退读取，**不要求** Anthropic SDK。
+- **密钥与 profile**：默认 `OPENAI_PROVIDER_PROFILE=deepseek`（`https://api.deepseek.com`，模型 `deepseek-v4-pro`）；密钥优先 `DEEPSEEK_API_KEY`，亦可用 `OPENAI_API_KEY`。可切 `volcengine` / `smartingredients` 等，见 `config.load_settings`。兼容键名：`SMARTINGREDIENTS_*`、`ANTHROPIC_*` 仅作密钥回退读取，**不要求** Anthropic SDK。
 - **合规**：抓取遵守 robots/TOS；生产建议单源故障隔离与重试（当前 MVP 简化）。
 
 ---

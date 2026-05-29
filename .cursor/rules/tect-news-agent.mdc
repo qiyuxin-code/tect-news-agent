@@ -10,7 +10,7 @@ alwaysApply: true
 ## 产品要点
 
 - 多源采集 → 可选正文 enrich / PydanticAI 打分 / CS 筛选 → **主编 JSON → Markdown**（`output/digest-<年>-W<周>.md`）。
-- 主编与打分共用 `OPENAI_*`；网关不支持 `response_format=json_object` 时会降级解析。
+- 主编与打分共用 `DEEPSEEK_API_KEY`（或 `OPENAI_*`）；默认 DeepSeek V4；网关不支持 `response_format=json_object` 时会降级解析。
 - `DIGEST_STRICT_URLS=1` 时快报链接须 ⊆ 本周采集 URL 白名单。
 
 ## 采集源（`pipeline.collect_articles`）

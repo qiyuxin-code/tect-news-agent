@@ -722,7 +722,7 @@ def _render_markdown(draft: dict[str, Any], url_to_title: dict[str, str]) -> str
 
 
 def _unsupported_json_response_format(err: BadRequestError) -> bool:
-    """部分兼容网关 / 模型拒绝 response_format=json_object（如部分方舟 MiniMax）。"""
+    """部分兼容网关 / 模型拒绝 response_format=json_object。"""
     s = str(err).lower()
     return "json_object" in s and ("not support" in s or "invalid" in s or "parameter" in s)
 

@@ -116,6 +116,20 @@ def _env_secret(key: str) -> str | None:
     return s if s else None
 
 
+def _resolve_openai_api_key(profile: str) -> str | None:
+    """按 profile 优先读取专用密钥，避免 shell 里残留的 OPENAI_API_KEY 盖掉 .env 的 DEEPSEEK_API_KEY。"""
+    legacy = (
+        _env_secret("SMARTINGREDIENTS_API_KEY")
+        or _env_secret("ANTHROPIC_AUTH_TOKEN")
+        or _env_secret("ANTHROPIC_API_KEY")
+    )
+    if profile in ("deepseek", "ds"):
+        return _env_secret("DEEPSEEK_API_KEY") or _env_secret("OPENAI_API_KEY") or legacy
+    if profile == "smartingredients":
+        return _env_secret("SMARTINGREDIENTS_API_KEY") or _env_secret("OPENAI_API_KEY") or legacy
+    return _env_secret("OPENAI_API_KEY") or _env_secret("DEEPSEEK_API_KEY") or legacy
+
+
 def load_settings() -> Settings:
     # 始终加载仓库根下 .env（即使从别的目录运行 python -m tect_news）。
     # override=True：避免 shell 里误 export 了空变量导致无法读到文件里的值。
@@ -139,22 +153,25 @@ def load_settings() -> Settings:
     profile = (
         profile_raw.strip().lower()
         if profile_raw and profile_raw.strip()
-        else "volcengine"
+        else "deepseek"
     )
 
     default_base: str | None = None
     default_wire = "chat"
     default_effort: str | None = None
     default_personality: str | None = None
-    default_openai_model = "minimax-m2.7"
+    default_openai_model = "deepseek-v4-pro"
     if profile == "smartingredients":
         default_base = "https://ai.smartingredients.my/v1"
         default_wire = "responses"
         default_effort = "xhigh"
         default_personality = "pragmatic"
         default_openai_model = "gpt-5.4"
+    elif profile in ("deepseek", "ds"):
+        default_base = "https://api.deepseek.com"
     elif profile in ("volcengine", "ark", "coding"):
         default_base = "https://ark.cn-beijing.volces.com/api/coding/v3"
+        default_openai_model = "minimax-m2.7"
 
     extra = _split_urls(os.getenv("RSS_FEED_URLS"))
     feeds = extra if extra else default_feeds
@@ -212,12 +229,7 @@ def load_settings() -> Settings:
     else:
         openai_prompt_key = _env_bool("OPENAI_PROMPT_KEY", False)
 
-    openai_api_key = (
-        _env_secret("OPENAI_API_KEY")
-        or _env_secret("SMARTINGREDIENTS_API_KEY")
-        or _env_secret("ANTHROPIC_AUTH_TOKEN")
-        or _env_secret("ANTHROPIC_API_KEY")
-    )
+    openai_api_key = _resolve_openai_api_key(profile)
 
     return Settings(
         openai_api_key=openai_api_key,

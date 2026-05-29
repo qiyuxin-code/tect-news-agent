@@ -2,7 +2,7 @@
 
 多源采集 **本周** 技术条目，经（可选）正文抓取、（可选）LLM 条目打分、主编式大模型 **结构化 JSON → Markdown**，生成**中文技术快报**：`output/digest-<年>-W<周>.md`。
 
-上游模型走 **OpenAI Python SDK 兼容** 的 HTTP 接口（默认配置为火山方舟 Coding + MiniMax；也可换其它兼容网关）。
+上游模型走 **OpenAI Python SDK 兼容** 的 HTTP 接口（默认 **DeepSeek V4**；也可换火山方舟、smartingredients 等兼容网关）。
 
 ---
 
@@ -69,7 +69,7 @@ pip install --default-timeout=600 -r requirements-agent.txt
 3. **CS 深度筛选（可选，`DIGEST_CS_FILTER=1`）**  
    `digest.filter_articles_by_cs_depth`：另一类 JSON 打分调用，可在进入主编前砍掉部分条目。
 
-以上 2、3 与主编 **共用** `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`。
+以上 2、3 与主编 **共用** `DEEPSEEK_API_KEY`（或 `OPENAI_API_KEY`）、`OPENAI_BASE_URL`、`OPENAI_MODEL`。
 
 ---
 
@@ -105,7 +105,7 @@ pip install --default-timeout=600 -r requirements-agent.txt
 
 详见 `.env.example`。
 
-- **LLM 网关**：`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`；可选 `OPENAI_PROVIDER_PROFILE`（如 `volcengine` / `smartingredients`）。
+- **LLM 网关**：`DEEPSEEK_API_KEY`（或 `OPENAI_API_KEY`）、`OPENAI_BASE_URL`、`OPENAI_MODEL`；可选 `OPENAI_PROVIDER_PROFILE`（默认 `deepseek`；亦可 `volcengine` / `smartingredients`）。
 - **路由**：快报主编默认 `OPENAI_WIRE_API=chat`。
 - **交互输入密钥**：`OPENAI_PROMPT_KEY=1`。
 - **快报**：`DIGEST_STRICT_URLS`、`DIGEST_LLM_TEMPERATURE`、`DIGEST_TZ`、`DIGEST_FETCH_*`、`DIGEST_AGENT_SCORE*`、`DIGEST_CS_*`。
