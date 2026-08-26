@@ -1,2 +1,4 @@
-# 可选：DIGEST_AGENT_SCORE=1 时需要；Python ≥3.10；依赖多、下载大
+# 可选：DIGEST_AGENT_SCORE=1 或 Agent harness 模式（--agent / DIGEST_AGENT_MODE=1）时需要；Python ≥3.10；依赖多、下载大
 pydantic-ai>=1.0.0; python_version >= "3.10"
+# Agent 模式经 socks 代理访问网关时需要；直接访问无需
+socksio>=1.0.0; python_version >= "3.10"

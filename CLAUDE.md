@@ -27,6 +27,10 @@
 │ 输出：周报 JSON → Markdown + URL 白名单校验                        │
 └─────────────────────────────────────────────────────────────────┘
                               ▲
+              可选：Pydantic AI 主编 Agent（agent_editor.py）        │
+              Agent harness：@agent.tool 采集/精选/校验工具 +         │
+              output_type=DigestDraft + output_validator + skill + MCP│
+                              ▲
                               │ 条目列表（可含正文 / 打分 / CS 筛选后）
 ┌─────────────────────────────┴───────────────────────────────────┐
 │ 可选：条目打分 Agent（agent_scoring.enrich_articles_agent_scores） │
@@ -49,6 +53,14 @@
 │ 采集：多 Source.fetch → dedupe_by_url                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+- **Pydantic AI 主编 Agent（`agent_editor.py`，`--agent` / `DIGEST_AGENT_MODE=1`）**：以 `pydantic_ai.Agent` 为 **harness**（自带 agent 循环/工具调度/结构化输出重试/hooks/usage），取代上图中主编与硬编码编排：
+  - 工具（`@agent.tool`，deps 注入 `DigestDeps`）：`collect_news` / `enrich_bodies` / `score_articles` / `filter_by_cs` / `verify_urls`，全部包装现有 pipeline 函数；
+  - `output_type=DigestDraft` 结构化输出 + `@agent.output_validator` 强制 `source_url ⊆ 语料白名单`（非法即 `ModelRetry`）；
+  - skill 经 `@agent.system_prompt` 注入：内置 `harness/skills/editor-workflow`、`compliance`，自定义放 `SKILLS_DIR`；
+  - 可选 MCP：`MCP_CONFIG`（Streamable HTTP JSON 数组）经 `pydantic_ai.capabilities.MCP` 并入同一循环；
+  - 护栏：`UsageLimits(request_limit / total_tokens_limit)` + hooks（on tool/run 打印）+ 终稿 `verify_urls_subset`（`DIGEST_STRICT_URLS` 时失败 raise）。
+  - 网关不支持 function calling 时回退旧 `digest` 路径（默认 `DIGEST_AGENT_MODE=0`）。
 
 - **主编**与 **打分 / CS** 默认 **共用** `Settings` 里的 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_MODEL`。网关须兼容 OpenAI Chat Completions；部分网关不支持 `response_format=json_object`，`digest._chat_completion_json` 已对 400 **降级重试**（去掉 `response_format`）。
 - **PydanticAI** 仅在 `DIGEST_AGENT_SCORE=1` 时按需 `import`；未安装或未满足 Python 版本会报错提示。
@@ -76,6 +88,7 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 - **时间窗**：`time_window.week_bounds_utc` + `DIGEST_TZ`（周一 00:00 起，左闭右开至下周一）。
 - **CLI**：`tect_news/cli.py` → `run_pipeline(..., pre_collected=...)`，避免采集跑两次。
 - **`--dry-collect`**：只执行采集 + `week_bounds` + 打印，`run_pipeline` 与所有 LLM 均不执行。
+- **Agent 模式（`--agent`）**：走 `agent_editor.run_agent_digest(..., pre_collected=...)`，跳过固定编排，由主编 LLM 自主调用工具。
 
 ---
 
@@ -87,6 +100,7 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 | `python -m tect_news --dry-collect` | 仅采集与列表预览 |
 | `python -m tect_news --output-dir PATH` | 输出目录 |
 | `python -m tect_news --xiaohongshu-seed PATH` | 小红书种子路径 |
+| `python -m tect_news --agent` | Pydantic AI 主编 Agent（harness 模式；需 Python≥3.10 + pydantic-ai） |
 
 运行时若 `OPENAI_PROMPT_KEY=1`，主编（及可走同一配置的步骤）前先交互输入密钥（见 `cli.py`）。
 
@@ -100,6 +114,9 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 | `tect_news/models.py` | `Article`：`extra` 存 `body_text`、`digest_agent_scores`、Github `stars` 等 |
 | `tect_news/pipeline.py` | 采集注册、编排 enrich → 打分 → CS → digest、写 HTML 注释头 |
 | `tect_news/enrich.py` | 正文抓取与截断策略 |
+| `tect_news/agent_editor.py` | Pydantic AI 主编 Agent（`--agent`）：DigestDeps / DigestDraft / 5 工具 / output_validator / run_agent_digest |
+| `tect_news/harness/skills.py` | skill 目录加载（SKILL.md → system prompt 注入） |
+| `tect_news/harness/skills/` | 内置 `editor-workflow`、`compliance` skill |
 | `tect_news/agent_scoring.py` | PydanticAI 批量条目打分 |
 | `tect_news/scoring_display.py` | `format_score_inline`（主编展示用；**无** pydantic-ai 依赖） |
 | `tect_news/digest.py` | 主编提示词、`_llm_json_draft`、`generate_digest_bundle`、可选 CS 筛选、周报 Markdown |
@@ -126,7 +143,7 @@ generate_digest_bundle → output/digest-<年>-W<周>.md
 
 ## 扩展与配置
 
-- **依赖文件**：`requirements.txt` 为核心（含 `python-dotenv`）；**PydanticAI 打分**用 `requirements-agent.txt`；`requirements-full.txt` 为二者合并。避免因 `pydantic-ai` 传递依赖过多导致一次安装易断网失败。
+- **依赖文件**：`requirements.txt` 为核心（含 `python-dotenv`）；**PydanticAI 打分 / Agent harness**（`--agent`）用 `requirements-agent.txt`；`requirements-full.txt` 为二者合并。避免因 `pydantic-ai` 传递依赖过多导致一次安装易断网失败。
 - **新数据源**：实现 `sources/base.Source`，在 `collect_articles` 列表中注册；纯 RSS 可复用 `RssSource`。
 - **密钥与 profile**：默认 `OPENAI_PROVIDER_PROFILE=deepseek`（`https://api.deepseek.com`，模型 `deepseek-v4-pro`）；密钥优先 `DEEPSEEK_API_KEY`，亦可用 `OPENAI_API_KEY`。可切 `volcengine` / `smartingredients` 等，见 `config.load_settings`。兼容键名：`SMARTINGREDIENTS_*`、`ANTHROPIC_*` 仅作密钥回退读取，**不要求** Anthropic SDK。
 - **合规**：抓取遵守 robots/TOS；生产建议单源故障隔离与重试（当前 MVP 简化）。

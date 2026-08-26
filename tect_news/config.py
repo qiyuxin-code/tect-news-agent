@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,11 @@ class Settings:
     digest_agent_score_max_articles: int
     digest_agent_score_batch_size: int
     digest_agent_score_temperature: float
+    digest_agent_mode: bool
+    digest_agent_request_limit: int
+    digest_agent_total_tokens_limit: int
+    skills_dir: str | None
+    mcp_config: list[dict]
 
 
 def _split_urls(raw: str | None) -> list[str]:
@@ -114,6 +120,20 @@ def _env_secret(key: str) -> str | None:
         return None
     s = str(v).strip().strip('"').strip("'")
     return s if s else None
+
+
+def _env_json_list(key: str) -> list[dict]:
+    """MCP_CONFIG 之类：JSON 数组，坏值一律回退空列表。"""
+    raw = os.getenv(key)
+    if not raw or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [d for d in data if isinstance(d, dict)]
 
 
 def _resolve_openai_api_key(profile: str) -> str | None:
@@ -279,4 +299,11 @@ def load_settings() -> Settings:
         digest_agent_score_max_articles=max(0, _env_int("DIGEST_AGENT_SCORE_MAX_ARTICLES", 48)),
         digest_agent_score_batch_size=max(4, _env_int("DIGEST_AGENT_SCORE_BATCH_SIZE", 18)),
         digest_agent_score_temperature=_env_float("DIGEST_AGENT_SCORE_TEMPERATURE", 0.15),
+        digest_agent_mode=_env_bool("DIGEST_AGENT_MODE", False),
+        digest_agent_request_limit=max(1, _env_int("DIGEST_AGENT_REQUEST_LIMIT", 40)),
+        digest_agent_total_tokens_limit=max(
+            10_000, _env_int("DIGEST_AGENT_TOTAL_TOKENS_LIMIT", 400_000)
+        ),
+        skills_dir=os.getenv("SKILLS_DIR") or None,
+        mcp_config=_env_json_list("MCP_CONFIG"),
     )

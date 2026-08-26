@@ -43,6 +43,7 @@ pip install --default-timeout=600 -r requirements-agent.txt
 | 命令 | 说明 |
 |------|------|
 | `python -m tect_news` | 全链路：采集 → 正文 enrich（可关）→ **PydanticAI 打分**（可选）→ **CS 深度筛选**（可选）→ **主编 JSON 快报** → 写入 `output/` |
+| `python -m tect_news --agent` | **Pydantic AI 主编 Agent**：把采集/精选/校验做成工具，由 LLM 自主编排，多轮迭代产出（需 Python ≥3.10 + `requirements-agent.txt`） |
 | `python -m tect_news --dry-collect` | 只采集、去重并打印条目（**不调任何大模型**）；用于测网络与时间窗 |
 | `python -m tect_news --output-dir /自定义目录` | 指定输出目录 |
 | `python -m tect_news --xiaohongshu-seed path/to.json` | 指定小红书种子 JSON（默认 `data/xiaohongshu_seed.json`） |
@@ -69,7 +70,15 @@ pip install --default-timeout=600 -r requirements-agent.txt
 3. **CS 深度筛选（可选，`DIGEST_CS_FILTER=1`）**  
    `digest.filter_articles_by_cs_depth`：另一类 JSON 打分调用，可在进入主编前砍掉部分条目。
 
-以上 2、3 与主编 **共用** `DEEPSEEK_API_KEY`（或 `OPENAI_API_KEY`）、`OPENAI_BASE_URL`、`OPENAI_MODEL`。
+4. **Pydantic AI 主编 Agent（可选，`--agent` / `DIGEST_AGENT_MODE=1`）** — 需 Python ≥3.10 + `requirements-agent.txt`  
+   `agent_editor.py`：`pydantic_ai.Agent` 作为 **harness**（自带 agent 循环 / 工具调度 / 结构化输出 / 重试 / hooks / 用量统计）。  
+   - 把 pipeline 步骤注册成 **5 个工具**：`collect_news`、`enrich_bodies`、`score_articles`、`filter_by_cs`、`verify_urls`，LLM 自主决定调用顺序与取舍；
+   - 输出模型 `output_type=DigestDraft`（headline / keywords / summary_paragraphs / sections / trivia），取代手写 JSON 解析；
+   - `@agent.output_validator` 强制 `source_url ⊆ 本周采集白名单`，非法 URL 自动重试；
+   - skill 经 `@agent.system_prompt` 注入（内置 `editor-workflow`、`compliance`，自定义见 `SKILLS_DIR`）；
+   - 可选 MCP：`MCP_CONFIG`（JSON 数组，Streamable HTTP）把远端工具并入同一循环。
+
+以上 2、3、4 与主编 **共用** `DEEPSEEK_API_KEY`（或 `OPENAI_API_KEY`）、`OPENAI_BASE_URL`、`OPENAI_MODEL`。
 
 ---
 
@@ -109,6 +118,7 @@ pip install --default-timeout=600 -r requirements-agent.txt
 - **路由**：快报主编默认 `OPENAI_WIRE_API=chat`。
 - **交互输入密钥**：`OPENAI_PROMPT_KEY=1`。
 - **快报**：`DIGEST_STRICT_URLS`、`DIGEST_LLM_TEMPERATURE`、`DIGEST_TZ`、`DIGEST_FETCH_*`、`DIGEST_AGENT_SCORE*`、`DIGEST_CS_*`。
+- **Agent harness**：`DIGEST_AGENT_MODE`、`DIGEST_AGENT_REQUEST_LIMIT`、`DIGEST_AGENT_TOTAL_TOKENS_LIMIT`、`SKILLS_DIR`、`MCP_CONFIG`。
 
 ---
 

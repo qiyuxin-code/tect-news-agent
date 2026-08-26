@@ -38,6 +38,11 @@ def main() -> None:
         action="store_true",
         help="只打印采集到的条目数量与来源，不调用大模型",
     )
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Pydantic AI 主编 Agent 模式（工具自主编排，替代固定 pipeline）",
+    )
     args = parser.parse_args()
 
     settings = load_settings()
@@ -46,6 +51,8 @@ def main() -> None:
         if not key:
             raise SystemExit("未输入 API key，已退出。")
         settings = replace(settings, openai_api_key=key)
+
+    agent_mode = args.agent or settings.digest_agent_mode
 
     now = datetime.now(UTC)
     week_since, until, collect_since = collection_bounds(settings, now)
@@ -68,6 +75,23 @@ def main() -> None:
             print(f"- [{a.source}] {a.title} {a.url}")
         if len(collected) > 80:
             print(f"... ({len(collected) - 80} more)")
+        return
+
+    if agent_mode:
+        from tect_news.agent_editor import run_agent_digest
+
+        path = run_agent_digest(
+            settings=settings,
+            xhs_seed_path=args.xiaohongshu_seed,
+            output_dir=args.output_dir,
+            now_utc=now,
+            pre_collected=collected,
+        )
+        print(path.resolve())
+        if settings.digest_output_html:
+            html_path = path.with_suffix(".html")
+            if html_path.is_file():
+                print(html_path.resolve())
         return
 
     path = run_pipeline(
